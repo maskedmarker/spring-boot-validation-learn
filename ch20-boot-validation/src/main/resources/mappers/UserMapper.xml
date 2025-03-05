@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.example.learn.spring.boot.validation.hello.dao.mapper.UserMapper">
+
+    <resultMap id="baseResultMap" type="org.example.learn.spring.boot.validation.hello.model.User">
+        <id property="id" column="id" />
+        <result property="name" column="name" />
+        <result property="email" column="email" />
+        <result property="createTime" column="create_time" />
+        <result property="updateTime" column="update_time" />
+    </resultMap>
+
+    <select id="findAll" resultMap="baseResultMap">
+        SELECT id, name, email, create_time, update_time FROM t_user
+    </select>
+    <select id="getById" resultMap="baseResultMap">
+        SELECT id, name, email, create_time, update_time FROM t_user where id = #{id}
+    </select>
+
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
+        insert into t_user (name, email, create_time, update_time) values (#{name}, #{email}, #{createTime}, #{updateTime})
+    </insert>
+</mapper>
