@@ -7,6 +7,6 @@ import javax.validation.constraints.NotNull;
 @Data
 public class QueryUserDto {
 
-    @NotNull
+    @NotNull(message = "id不能为null")
     private Long id;
 }
