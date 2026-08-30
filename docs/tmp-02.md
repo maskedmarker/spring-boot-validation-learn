@@ -40,21 +40,42 @@ public class ValidationAutoConfiguration {
 }
 ```
 
-在mvc中注册的Validator
+## 在mvc中注册的Validator
 
+http请求的正向调用链
+
+```text
+org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod
+    org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle
+        org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest
+            org.springframework.web.method.support.InvocableHandlerMethod.getMethodArgumentValues
+                org.springframework.web.method.support.HandlerMethodArgumentResolverComposite.resolveArgument
+                    org.springframework.web.servlet.mvc.method.annotation.RequestResponseBodyMethodProcessor.resolveArgument
+                        org.springframework.web.bind.support.DefaultDataBinderFactory.createBinder (这里使用WebDataBinderFactory创建WebDataBinder)
+                            new WebRequestDataBinder(target, objectName)
+                            WebBindingInitializer.initBinder(dataBinder, webRequest) (在这里为WebDataBinder设置IOC中的org.springframework.validation.Validator)
+                        org.springframework.web.servlet.mvc.method.annotation.AbstractMessageConverterMethodArgumentResolver.validateIfApplicable (WebDataBinder在这里触发Validator的validate功能)
+                            org.springframework.validation.DataBinder.validate(java.lang.Object...)
+                                org.springframework.validation.Validator.validate
+```
 
 ```text
 public class WebMvcAutoConfiguration {
 
     @Configuration(proxyBeanMethods = false)
 	public static class EnableWebMvcConfiguration extends DelegatingWebMvcConfiguration implements ResourceLoaderAware {
+	    
+	    // 这里为bean-name设定为mvcValidator,启动mvc中需要使用的都需要使用@Qualifier("mvcValidator"),防止错用用户随意定义的validator
 	    @Bean
 		@Override
 		public Validator mvcValidator() {
-			if (!ClassUtils.isPresent("javax.validation.Validator", getClass().getClassLoader())) {
-				return super.mvcValidator();
-			}
-			return ValidatorAdapter.get(getApplicationContext(), getValidator());
+			// 如果javax.validation包不存在,就不加载hibernate-validator
+            if (!ClassUtils.isPresent("javax.validation.Validator", getClass().getClassLoader())) {
+                return super.mvcValidator();
+            }
+            
+            // 如果IOC已经定义了org.springframework.validation.Validator则直接返回可用;如果是javax.validation.Validator,则用SpringValidatorAdapter封装成同一个的org.springframework.validation.Validator
+            return ValidatorAdapter.get(getApplicationContext(), getValidator());
 		}
 	}
 	

@@ -1,48 +1,87 @@
-
-
-## @Validated
-
-这个是spring-framework的注解
-
-## @Valid
-
-这个是hibernate-validator的注解
+# spring-validation
 
 ```text
-Marks a property, method parameter or method return type for validation cascading.
-Constraints defined on the object and its properties are be validated when the property, method parameter or method return type is validated.
+核心点:
+DataBinder不仅支持绑定属性值,还支持对绑定后的属性值进行验证.🎯🎯🎯🎯🎯🎯
+对于spring-mvc,WebDataBinder作为DataBinder的子类,在解析request请求中并绑定到目标handler方法参数时,会先校验,此时可能会触发校验失败异常.
+
+一句话串起来
+HTTP 请求 → DispatcherServlet → RequestMappingHandlerAdapter 
+    → RequestResponseBodyMethodProcessor.resolveArgument（Jackson 反序列化）
+    → validateIfApplicable（看到 @Valid）→ DataBinder.validate → SpringValidatorAdapter.validate（Spring 接口 → JSR 接口）
+    → ValidatorImpl.validate → ConstraintTree → NotNullValidator.isValid → ConstraintViolation → 译回 FieldError 
+    → 抛 MethodArgumentNotValidException → 400。
+
 ```
 
- 
-## javax.validation.Valid
-
-这个是jsr的注解
 
 
-## 
 
 ```text
-public Object resolveArgument(MethodParameter parameter, @Nullable ModelAndViewContainer mavContainer,
-        NativeWebRequest webRequest, @Nullable WebDataBinderFactory binderFactory) throws Exception {
+@Validated是spring-framework的注解,
+@Valid是JSR-303/380的注解.
+
+
+Spring Boot 2.3.2 
+    → spring-framework 5.2.8.RELEASE + hibernate-validator 6.1.5.Final + validation-api 2.0.1.Final。
+
+直接给结论：
+hibernate-validator 只是"校验引擎"，它自己是不知道 MVC 的。
+真正把它接到 MVC 参数校验上的是 Spring 自己——Spring 用 SpringValidatorAdapter 把 JSR-303 的 javax.validation.Validator 包装成 Spring 的 Validator/SmartValidator，然后由 MVC 的参数解析器在反序列化完参数后调用它。 
+整个过程分两段：启动时的"装配"，和请求时的"调用"。
+```
+
+## 关键类
+```text
+类	                                                 位置	                                        作用
+RequestResponseBodyMethodProcessor	                 spring-webmvc	                            @RequestBody 解析 + 触发校验
+AbstractMessageConverterMethodArgumentResolver	     spring-webmvc	                            validateIfApplicable（@Valid/@Validated 判断）
+DataBinder	                                         spring-context	                            validate(Object...) 遍历校验器
+SpringValidatorAdapter	                             spring-context                             桥：JSR↔Spring 双向翻译
+LocalValidatorFactoryBean	                         spring-context 	                        引导 hibernate-validator，生成 ValidatorImpl
+ValidationAutoConfiguration	                         spring-boot-autoconfigure	                自动装配上面的 Bean
+HibernateValidator	                                 hibernate-validator	                    SPI 入口（META-INF/services/...ValidationProvider）
+ValidatorImpl	                                     hibernate-validator	                    引擎主流程 validate → validateInContext
+ConstraintTree	                                     hibernate-validator	                    单个约束的实例化 + isValid 执行
+NotNullValidator	                                 hibernate-validator	                    @NotNull 的具体校验器
+```
+
+```text
+三个角色分工
+
+
+javax.validation:validation-api	JSR-303/380	只定义注解(@NotNull、@Valid …)和接口(Validator、ConstraintValidator)
+hibernate-validator	实现	注解的校验引擎：解析约束、实例化校验器、执行 isValid、收集 ConstraintViolation
+spring-framework/spring-boot 桥接 + 接线	把上述引擎适配成 Spring 的校验抽象，并埋到 MVC 参数解析流程里
+```
+
+
+
+## HandlerMethodArgumentResolver
+
+RequestPartMethodArgumentResolver在resolveArgument时,进行了入参校验
+
+```text
+public Object resolveArgument(MethodParameter parameter, @Nullable ModelAndViewContainer mavContainer, NativeWebRequest webRequest, @Nullable WebDataBinderFactory binderFactory) throws Exception {
 
     parameter = parameter.nestedIfOptional();
     Object arg = readWithMessageConverters(webRequest, parameter, parameter.getNestedGenericParameterType());
     String name = Conventions.getVariableNameForParameter(parameter);
 
     if (binderFactory != null) {
+        // WebDataBinder的target是arg
         WebDataBinder binder = binderFactory.createBinder(webRequest, arg, name);
         if (arg != null) {
-            // 校验参数
+            // 校验入参
             validateIfApplicable(binder, parameter);
             if (binder.getBindingResult().hasErrors() && isBindExceptionRequired(binder, parameter)) {
                 throw new MethodArgumentNotValidException(parameter, binder.getBindingResult());
             }
         }
-        if (mavContainer != null) {
-            mavContainer.addAttribute(BindingResult.MODEL_KEY_PREFIX + name, binder.getBindingResult());
-        }
+        // ...
     }
 
+    // 为了支持handlerMethod入参为Optional类型 
     return adaptArgumentIfNecessary(arg, parameter);
 }
 
@@ -64,11 +103,58 @@ protected void validateIfApplicable(WebDataBinder binder, MethodParameter parame
 }
 ```
 
+## DataBinder
+
+DataBinder不仅支持绑定属性值,还支持对绑定后的属性值进行验证.🎯🎯🎯🎯🎯🎯
+
+```text
+public void validate(Object... validationHints) {
+    Object target = getTarget();
+    Assert.state(target != null, "No target to validate");
+    BindingResult bindingResult = getBindingResult();
+    // Call each validator with the same binding result
+    for (Validator validator : getValidators()) {
+        // validationHints是SmartValidator需要的入参,其他类型的不需要
+        if (!ObjectUtils.isEmpty(validationHints) && validator instanceof SmartValidator) {
+            ((SmartValidator) validator).validate(target, bindingResult, validationHints);
+        }
+        else if (validator != null) {
+            validator.validate(target, bindingResult);
+        }
+    }
+}
+```
 
 ### WebDataBinder
 
-DataBinder不仅支持绑定属性值,还支持对绑定后的属性值进行验证.
 WebDataBinder is Special DataBinder for data binding from web request parameters to JavaBean objects
+WebDataBinder的validator来自于ConfigurableWebBindingInitializer.
+WebDataBinder的validator具体是ValidatorAdapter,ValidatorAdapter.target是LocalValidatorFactoryBean
+
+
+```text
+// org.springframework.web.bind.support.ConfigurableWebBindingInitializer.initBinder
+
+public void initBinder(WebDataBinder binder) {
+    // ...
+    // 每次生成WebDataBinder时, 初始化时validator如果supports时,才会添加validator
+    if (this.validator != null && binder.getTarget() != null && this.validator.supports(binder.getTarget().getClass())) {
+        binder.setValidator(this.validator);
+    }
+    if (this.conversionService != null) {
+        binder.setConversionService(this.conversionService);
+    }
+    // ...
+}
+```
+
+
+## DefaultDataBinderFactory
+
+```text
+
+```
+
 
 
 
