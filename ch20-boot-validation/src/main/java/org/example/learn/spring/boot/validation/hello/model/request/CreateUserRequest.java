@@ -2,8 +2,9 @@ package org.example.learn.spring.boot.validation.hello.model.request;
 
 import lombok.Data;
 import org.example.learn.spring.boot.validation.hello.common.validator.EnumValidator;
+import org.springframework.util.StringUtils;
 
-import javax.validation.constraints.NotNull;
+import javax.validation.constraints.AssertTrue;
 
 @Data
 public class CreateUserRequest {
@@ -14,4 +15,11 @@ public class CreateUserRequest {
     private String gender;
 
     private String email;
+
+    private String mobile;
+
+    @AssertTrue(message = "手机号和邮箱不能同时为空")
+    public boolean isContractInfoPresent() {
+        return StringUtils.hasText(email) || StringUtils.hasText(mobile);
+    }
 }
